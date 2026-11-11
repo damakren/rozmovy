@@ -119,6 +119,9 @@ a { color: var(--flame); }
 .excerpt { font-family: var(--serif); font-size: 17px; line-height: 1.62; color: var(--ink); display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
 .ask { margin: 2px 0 0; font-family: var(--serif); font-weight: 600; font-size: clamp(19px, 5vw, 22px); line-height: 1.32; color: var(--flame); text-wrap: balance; }
 .excerpt p { margin: 0; }
+.excerpt p.gloss { margin-top: 12px; font-family: var(--ui); font-size: 13px; line-height: 1.45; color: var(--ink-faint); text-indent: 0; }
+.listen { align-self: flex-start; margin: 4px 0 2px; gap: 8px; }
+.listen[aria-pressed="true"] { border-color: var(--flame); color: var(--flame); }
 .excerpt b { font-weight: 600; color: #fff3df; }
 .excerpt .gap { color: var(--ink-faint); text-align: center; letter-spacing: 0.2em; }
 .cut { display: flex; align-items: center; gap: 12px; margin: 10px 0 2px; color: var(--ember); font-family: var(--hand); font-size: 24px; }
@@ -250,6 +253,7 @@ a { color: var(--flame); }
       <div class="eyebrow" id="cardOrd"></div>
       <h2 class="hand" id="cardTitle"></h2>
       <p class="ask" id="cardAsk"></p>
+      <button class="btn small listen" id="cardListen" type="button" aria-pressed="false" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10H4z"/><path d="M16.5 9a4 4 0 0 1 0 6"/></svg><span id="cardListenT">Слухати уривок</span></button>
       <div class="excerpt" id="cardText"></div>
       <div class="dock">
       <div class="cut">далі — у книжці</div>
@@ -797,7 +801,7 @@ function tick() {
 }
 
 /* ---------- звук вогню (синтезований, вмикається лише після натискання) ---------- */
-var actx = null, master = null, crackleTimer = null, soundOn = false;
+var actx = null, master = null, fireG = null, crackleTimer = null, soundOn = false;
 function noiseBuffer(sec, brown) {
   var len = Math.floor(actx.sampleRate * sec), b = actx.createBuffer(1, len, actx.sampleRate), d = b.getChannelData(0), last = 0;
   for (var i = 0; i < len; i++) { var w = Math.random() * 2 - 1; if (brown) { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; } else d[i] = w; }
@@ -808,12 +812,14 @@ function startSound() {
     if (!actx) {
       var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
       actx = new AC(); master = actx.createGain(); master.gain.value = 0; master.connect(actx.destination);
-      var rum = actx.createBufferSource(); rum.buffer = noiseBuffer(4, true); rum.loop = true;
+      fireG = actx.createGain(); fireG.gain.value = 1; fireG.connect(master);
+      BB = noiseBuffer(4, true); NB = noiseBuffer(3, false);
+      var rum = actx.createBufferSource(); rum.buffer = BB; rum.loop = true;
       var lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380;
-      var rg = actx.createGain(); rg.gain.value = 0.55; rum.connect(lp); lp.connect(rg); rg.connect(master); rum.start();
-      var hiss = actx.createBufferSource(); hiss.buffer = noiseBuffer(3, false); hiss.loop = true;
+      var rg = actx.createGain(); rg.gain.value = 0.55; rum.connect(lp); lp.connect(rg); rg.connect(fireG); rum.start();
+      var hiss = actx.createBufferSource(); hiss.buffer = NB; hiss.loop = true;
       var bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.6;
-      var hg = actx.createGain(); hg.gain.value = 0.025; hiss.connect(bp); bp.connect(hg); hg.connect(master); hiss.start();
+      var hg = actx.createGain(); hg.gain.value = 0.025; hiss.connect(bp); bp.connect(hg); hg.connect(fireG); hiss.start();
       var crack = noiseBuffer(0.12, false);
       crackleTimer = setInterval(function () {
         if (!soundOn || Math.random() > 0.55) return;
@@ -824,7 +830,7 @@ function startSound() {
           var f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1200 + Math.random() * 4200; f.Q.value = 0.9;
           var g = actx.createGain(); var peak = 0.08 + Math.pow(Math.random(), 2) * 0.55;
           g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(peak, t0 + 0.002); g.gain.exponentialRampToValueAtTime(0.0008, t0 + 0.02 + Math.random() * 0.06);
-          s.connect(f); f.connect(g); g.connect(master); s.start(t0); s.stop(t0 + 0.12);
+          s.connect(f); f.connect(g); g.connect(fireG); s.start(t0); s.stop(t0 + 0.12);
         }
       }, 70);
     }
@@ -833,13 +839,355 @@ function startSound() {
     master.gain.setValueAtTime(master.gain.value, actx.currentTime);
     master.gain.linearRampToValueAtTime(0.5, actx.currentTime + 1.5);
     soundOn = true; $('soundBtn').setAttribute('aria-pressed', 'true');
+    if (!$('card').hidden && current >= 0) playScene(SPARKS[current].n);
   } catch (e) { soundOn = false; }
 }
 function stopSound() {
-  soundOn = false; $('soundBtn').setAttribute('aria-pressed', 'false');
+  stopScene(); soundOn = false; $('soundBtn').setAttribute('aria-pressed', 'false');
   if (actx && master) { master.gain.cancelScheduledValues(actx.currentTime); master.gain.setValueAtTime(master.gain.value, actx.currentTime); master.gain.linearRampToValueAtTime(0, actx.currentTime + 0.4); }
 }
 $('soundBtn').addEventListener('click', function () { soundOn ? stopSound() : startSound(); });
+
+/* ---------- звукове тло розмов (синтезоване; грає, поки відкрита картка й увімкнено звук).
+   Якщо поруч зі сторінкою лежить запис zvuk-N.mp3 (або .m4a), він грає замість синтезу. ---------- */
+var sndScene = null, NB = null, BB = null, REV = null, SNDFILE = {};
+function fireLevel(v) { if (actx && fireG) { var t = actx.currentTime; fireG.gain.cancelScheduledValues(t); fireG.gain.setValueAtTime(fireG.gain.value, t); fireG.gain.linearRampToValueAtTime(v, t + 1); } }
+function mf(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+function rr(a, b) { return a + Math.random() * (b - a); }
+function reverb() {   /* коротке «повітря» навколо звуків: згенерований імпульс, без файлів */
+  if (REV) return REV;
+  var sr = actx.sampleRate, len = Math.floor(sr * 1.5), b = actx.createBuffer(2, len, sr), c, i, d, lp;
+  for (c = 0; c < 2; c++) { d = b.getChannelData(c); lp = 0; for (i = 0; i < len; i++) { lp = lp * 0.6 + (Math.random() * 2 - 1) * 0.4; d[i] = lp * Math.pow(1 - i / len, 3.2); } }
+  REV = actx.createConvolver(); REV.buffer = b; var w = actx.createGain(); w.gain.value = 0.55; REV.connect(w); w.connect(master); return REV;
+}
+function stopScene() {
+  if (!sndScene) return; var sc = sndScene; sndScene = null; fireLevel(1);
+  sc.timers.forEach(function (t) { clearTimeout(t); });
+  try { var t = actx.currentTime; sc.bus.gain.cancelScheduledValues(t); sc.bus.gain.setValueAtTime(sc.bus.gain.value, t); sc.bus.gain.linearRampToValueAtTime(0, t + 0.7); } catch (e) {}
+  setTimeout(function () { sc.nodes.forEach(function (n) { try { n.stop(); } catch (e) {} }); if (sc.file) { try { sc.file.el.pause(); sc.file.node.disconnect(); } catch (e) {} } try { sc.bus.disconnect(); } catch (e) {} }, 900);
+}
+function playFile(sc, f) { try { f.el.currentTime = 0; f.el.loop = true; f.node.connect(sc.bus); sc.file = f; var p = f.el.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+function probeSound(n, sc) {
+  if (location.protocol.indexOf('http') !== 0) { SNDFILE[n] = false; return; }
+  var exts = ['mp3', 'm4a'], k = 0;
+  (function tryNext() {
+    if (k >= exts.length) { SNDFILE[n] = false; return; }
+    var a = new Audio(); a.preload = 'auto';
+    a.oncanplaythrough = function () {
+      if (SNDFILE[n]) return; var f = { el: a, node: actx.createMediaElementSource(a) }; SNDFILE[n] = f;
+      if (sndScene === sc) { sc.timers.forEach(function (t) { clearTimeout(t); }); sc.timers = []; sc.nodes.forEach(function (x) { try { x.stop(); } catch (e) {} }); sc.nodes = []; playFile(sc, f); sc.bus.gain.linearRampToValueAtTime(1, actx.currentTime + 0.8); }
+    };
+    a.onerror = function () { k++; tryNext(); };
+    a.src = 'zvuk-' + n + '.' + exts[k];
+  })();
+}
+function playScene(n) {
+  stopScene(); if (!soundOn || !actx || !SCENES[n]) return;
+  var sc = { bus: actx.createGain(), timers: [], nodes: [], pans: {} };
+  sc.bus.gain.value = 0; sc.bus.connect(master);
+  var send = actx.createGain(); send.gain.value = 0.22; sc.bus.connect(send); send.connect(reverb());
+  sndScene = sc; fireLevel(0.16);
+  if (SNDFILE[n]) { sc.bus.gain.linearRampToValueAtTime(1, actx.currentTime + 1.2); playFile(sc, SNDFILE[n]); return; }
+  sc.bus.gain.linearRampToValueAtTime((LEVEL[n] || 1) * 1.3, actx.currentTime + 1.2);
+  try { SCENES[n](sc); } catch (e) {}
+  if (SNDFILE[n] === undefined) probeSound(n, sc);
+}
+function later(sc, ms, fn) { sc.timers.push(setTimeout(function () { if (sndScene === sc) { try { fn(); } catch (e) {} } }, ms)); }
+function every(sc, min, max, fn, first) {
+  (function loop(d) { later(sc, d, function () { fn(); loop(min + Math.random() * (max - min)); }); })(first == null ? 400 + Math.random() * min : first);
+}
+function pan(sc, p) {   /* місце звуку: -1 ліворуч … 1 праворуч */
+  if (!actx.createStereoPanner) return sc.bus; var k = Math.round(p * 10);
+  if (!sc.pans[k]) { var n = actx.createStereoPanner(); n.pan.value = k / 10; n.connect(sc.bus); sc.pans[k] = n; } return sc.pans[k];
+}
+function tone(sc, o) {
+  var t0 = actx.currentTime + (o.t || 0), d = o.d || 0.3, g0 = o.g || 0.2, osc = actx.createOscillator(), g = actx.createGain();
+  osc.type = o.type || 'sine';
+  if (o.f0) { osc.frequency.setValueAtTime(o.f0, t0); osc.frequency.exponentialRampToValueAtTime(o.f, t0 + (o.gl || 0.16)); } else osc.frequency.setValueAtTime(o.f, t0);
+  if (o.f2) osc.frequency.exponentialRampToValueAtTime(o.f2, t0 + d);
+  if (o.vib) { var l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = o.vib; lg.gain.setValueAtTime(0, t0); lg.gain.linearRampToValueAtTime(o.f * (o.vd || 0.011), t0 + Math.min(d * 0.6, 0.5)); l.connect(lg); lg.connect(osc.frequency); l.start(t0); l.stop(t0 + d + 0.1); }
+  g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(g0, t0 + (o.a || 0.01));
+  if (o.hold) { g.gain.setValueAtTime(g0, Math.max(t0 + (o.a || 0.01), t0 + d - (o.r || 0.08))); g.gain.linearRampToValueAtTime(0.0001, t0 + d); }
+  else g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+  osc.connect(g); g.connect(o.out || sc.bus); osc.start(t0); osc.stop(t0 + d + 0.05);
+}
+function burst(sc, o) {
+  var t0 = actx.currentTime + (o.t || 0), d = o.d || 0.1, s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = NB; s.loop = true; f.type = o.ft || 'bandpass'; f.frequency.setValueAtTime(o.ff || 1000, t0);
+  if (o.ff2) f.frequency.exponentialRampToValueAtTime(o.ff2, t0 + d); f.Q.value = o.q || 1;
+  g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(o.g || 0.2, t0 + (o.a || 0.005)); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+  s.connect(f); f.connect(g); g.connect(o.out || sc.bus); s.start(t0, Math.random() * 2); s.stop(t0 + d + 0.05);
+}
+function bed(sc, o) {
+  var s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = o.brown ? BB : NB; s.loop = true; f.type = o.ft || 'bandpass'; f.frequency.value = o.ff; f.Q.value = o.q || 0.7; g.gain.value = o.g;
+  s.connect(f); f.connect(g); g.connect(o.out || sc.bus); s.start(0, Math.random() * 2); sc.nodes.push(s); return { f: f, g: g };
+}
+function lfo(sc, param, rate, depth) { var l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = rate; lg.gain.value = depth; l.connect(lg); lg.connect(param); l.start(); sc.nodes.push(l); }
+function far(sc, cutoff, gain, p) { var f = actx.createBiquadFilter(), g = actx.createGain(); f.type = 'lowpass'; f.frequency.value = cutoff; g.gain.value = gain; f.connect(g); g.connect(p == null ? sc.bus : pan(sc, p)); f.g = g; return f; }
+/* дудка: основний тон, октава й подих; гучність і висота трохи «дихають» */
+function pipe(sc, midi, t, d, o) {
+  o = o || {}; var f = mf(midi) * rr(0.997, 1.003), g = (o.g || 0.1) * rr(0.85, 1.1);
+  tone(sc, { f: f, f0: o.from, t: t, d: d, g: g, a: o.a || 0.05, hold: 1, r: 0.1, vib: o.vib || 5.2, out: o.out });
+  tone(sc, { f: f * 2, f0: o.from ? o.from * 2 : null, t: t, d: d, g: g * 0.16, a: 0.06, hold: 1, r: 0.1, out: o.out });
+  tone(sc, { f: f * 3, t: t, d: d, g: g * 0.05, a: 0.07, hold: 1, r: 0.1, out: o.out });
+  burst(sc, { t: t, d: d, g: g * (o.breath || 0.22), ff: f * 2, q: 3, a: 0.03, out: o.out });
+}
+function tune(sc, notes, o) { var t = o.t || 0; notes.forEach(function (n) { var d = n[1] * o.beat * rr(0.97, 1.03); if (n[0]) pipe(sc, n[0], t, d * 0.96, o); t += d; }); return t; }
+function bansuri(sc, phrase, t, out) { var prev = null; phrase.forEach(function (n) { var d = n[1] * 0.62 * rr(0.96, 1.05); pipe(sc, n[0], t, d * 0.98, { g: 0.075, breath: 0.42, vib: 4.2, a: 0.09, from: prev ? mf(prev) : null, out: out }); prev = n[0]; t += d; }); return t; }
+function bell(sc, f, t, g, d, out) { [1, 2.0, 2.76, 5.4].forEach(function (m, i) { tone(sc, { f: f * m, t: t, d: d / (1 + i * 0.6), g: g / (1 + i * 1.3), a: 0.004, out: out }); }); }
+/* цвіркуни: двоє-троє, кожен зі своїм голосом, темпом і місцем */
+function crickets(sc, g, min, max) {
+  [[-0.7, 4150], [0.6, 4520], [0.1, 3900]].forEach(function (c, i) {
+    var out = pan(sc, c[0]), f = c[1] * rr(0.97, 1.03), gg = g * (i === 2 ? 0.6 : 1);
+    every(sc, (min || 700) * (1 + i * 0.35), (max || 1500) * (1 + i * 0.35), function () {
+      var n = 2 + Math.floor(Math.random() * 3), k, j;
+      for (k = 0; k < n; k++) for (j = 0; j < 4; j++) tone(sc, { f: f * rr(0.995, 1.005), t: k * rr(0.1, 0.12) + j * 0.018, d: 0.016, g: gg * rr(0.7, 1.1), a: 0.004, out: out });
+    }, 300 + i * 700);
+  });
+}
+function owl(sc, t, out) {
+  var f = rr(330, 352); [[0, 0.5], [0.78, 0.2], [1.04, 0.62]].forEach(function (h, i) {
+    var d = h[1] * rr(0.9, 1.1) + 0.15;
+    tone(sc, { f: f * (i === 1 ? 1.03 : 1), f2: f * 0.92, t: t + h[0], d: d, g: 0.15, a: 0.07, hold: 1, r: 0.14, vib: 6, vd: 0.006, out: out });
+    tone(sc, { f: f * 2, f2: f * 1.84, t: t + h[0], d: d, g: 0.02, a: 0.07, hold: 1, r: 0.12, out: out });
+    burst(sc, { t: t + h[0], d: d, g: 0.03, ff: f, q: 5, a: 0.06, out: out });
+  });
+}
+function nightingale(sc, t, out) {   /* фраза з кількох колін, щоразу інша */
+  var x = t, k, n, f, kinds = ['whistle', 'trill', 'tjok', 'roll', 'sweep'], i, kind;
+  for (i = 0; i < 4 + Math.floor(Math.random() * 2); i++) {
+    kind = kinds[Math.floor(Math.random() * kinds.length)];
+    if (kind === 'whistle') { n = 2 + Math.floor(Math.random() * 3); f = rr(2100, 2600); for (k = 0; k < n; k++) { tone(sc, { f: f, f2: f * 1.45, t: x, d: 0.17, g: 0.045, a: 0.03, out: out }); x += 0.26; } }
+    else if (kind === 'trill') { n = 7 + Math.floor(Math.random() * 8); f = rr(2700, 3700); for (k = 0; k < n; k++) { tone(sc, { f: f, f2: f * 0.8, t: x, d: 0.05, g: 0.055, a: 0.005, out: out }); x += 0.072; } }
+    else if (kind === 'tjok') { n = 3 + Math.floor(Math.random() * 3); for (k = 0; k < n; k++) { tone(sc, { f: 4300, f2: 2300, t: x, d: 0.075, g: 0.05, a: 0.004, out: out }); x += 0.125; } }
+    else if (kind === 'roll') { n = 10 + Math.floor(Math.random() * 8); f = rr(1700, 2100); for (k = 0; k < n; k++) { tone(sc, { f: f, f2: f * 1.25, t: x, d: 0.03, g: 0.04, a: 0.004, out: out }); x += 0.042; } }
+    else { tone(sc, { f: 1900, f2: 3900, t: x, d: 0.3, g: 0.045, a: 0.04, out: out }); x += 0.36; }
+    x += rr(0.08, 0.3);
+  }
+  return x - t;
+}
+function clink(sc, t, g) { [5250, 7430, 9870, 12400].forEach(function (f, i) { tone(sc, { f: f * (0.99 + Math.random() * 0.02), t: t, d: 0.55 - i * 0.09, g: g / (1 + i * 0.35), a: 0.001 }); }); }
+function anvil(sc, t, g, out) { var k = rr(0.985, 1.015); [1180, 2140, 3390, 4960, 6420].forEach(function (f, i) { tone(sc, { f: f * k, t: t, d: 0.75 - i * 0.1, g: g / (1 + i * 0.7), a: 0.002, out: out }); }); burst(sc, { t: t, d: 0.04, g: g * 1.4, ff: 2500, q: 0.8, a: 0.001, out: out }); }
+/* метал об посуд: короткий високий дзенькіт із чітким ударом */
+function tink(sc, t, g, base, out) { var k = rr(0.98, 1.02); [1, 1.74, 2.52, 3.76].forEach(function (m, i) { tone(sc, { f: base * m * k, t: t, d: 0.3 - i * 0.05, g: g / (1 + i * 0.6), a: 0.001, out: out }); }); burst(sc, { t: t, d: 0.025, g: g * 1.5, ft: 'highpass', ff: 3500, a: 0.001, out: out }); }
+/* барабан: тіло в межах чутного на малих динаміках + ляск шкіри */
+function drum(sc, t, g, out) { tone(sc, { f: 165, f2: 100, t: t, d: 0.34, g: g, a: 0.004, out: out }); tone(sc, { f: 330, f2: 210, t: t, d: 0.12, g: g * 0.45, a: 0.003, out: out }); burst(sc, { t: t, d: 0.06, g: g * 0.7, ff: 800, q: 1, a: 0.002, out: out }); }
+function bird(sc, t) {
+  var out = pan(sc, rr(-0.9, 0.9)), f = rr(2800, 5600), kind = Math.random(), n, k;
+  if (kind < 0.4) { n = 2 + Math.floor(Math.random() * 4); var up = Math.random() < 0.5; for (k = 0; k < n; k++) tone(sc, { f: f, f2: f * (up ? 1.35 : 0.75), t: t + k * 0.13, d: 0.09, g: 0.028, a: 0.01, out: out }); }
+  else if (kind < 0.7) { n = 6 + Math.floor(Math.random() * 8); for (k = 0; k < n; k++) tone(sc, { f: f * 0.8, f2: f * 0.7, t: t + k * 0.055, d: 0.035, g: 0.022, a: 0.004, out: out }); }
+  else { tone(sc, { f: f * 0.7, f2: f * 0.9, t: t, d: 0.2, g: 0.026, a: 0.03, out: out }); tone(sc, { f: f * 0.9, f2: f * 0.6, t: t + 0.26, d: 0.24, g: 0.026, a: 0.03, out: out }); }
+}
+function tanpura(sc, g) {
+  var seq = [55, 60, 60, 48], i = 0;
+  every(sc, 1150, 1150, function () {
+    var f = mf(seq[i++ % 4]), t0 = actx.currentTime, o = actx.createOscillator(), fl = actx.createBiquadFilter(), gg = actx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = f; fl.type = 'bandpass'; fl.Q.value = 2.5;
+    fl.frequency.setValueAtTime(f * 2, t0); fl.frequency.exponentialRampToValueAtTime(f * 7, t0 + 1.2); fl.frequency.exponentialRampToValueAtTime(f * 3, t0 + 4);
+    gg.gain.setValueAtTime(0.0001, t0); gg.gain.linearRampToValueAtTime(g, t0 + 0.25); gg.gain.exponentialRampToValueAtTime(0.0001, t0 + 4.5);
+    o.connect(fl); fl.connect(gg); gg.connect(sc.bus); o.start(t0); o.stop(t0 + 4.6);
+  }, 200);
+}
+/* ситар: струна за Карплусом–Стронгом із «дзижчанням» підставки; звук довгий, буфери рахуються раз */
+var SITAR = {};
+function sitarBuf(midi) {
+  if (SITAR[midi]) return SITAR[midi];
+  var sr = actx.sampleRate, f = mf(midi), N = Math.max(2, Math.round(sr / f)), len = Math.floor(sr * 7), b = actx.createBuffer(1, len, sr), d = b.getChannelData(0), ring = new Float32Array(N), i, k, v, lp = 0, pk = 0;
+  for (i = 0; i < N; i++) { v = Math.random() * 2 - 1; lp = lp * 0.5 + v * 0.5; ring[i] = lp; }
+  for (i = 0, k = 0; i < len; i++) {
+    var nx = (k + 1) % N; v = (ring[k] * 0.82 + ring[nx] * 0.18) * 0.99965;     /* мале згасання: струна тягнеться */
+    if (v > 0.2) v = 0.2 + (v - 0.2) * 0.75;                                     /* підставка: струна «лягає» на неї й дзижчить */
+    ring[k] = v; d[i] = v; k = nx;
+  }
+  for (i = len - 1; i > 0; i--) { d[i] = d[i] - 0.6 * d[i - 1]; }
+  for (i = 0; i < len; i++) { var e = 1 + 2.2 * Math.min(1, i / (sr * 3)); d[i] *= e; if (Math.abs(d[i]) > pk) pk = Math.abs(d[i]); }   /* вирівнюємо згасання, щоб нота не обривалася */
+  for (i = 0; i < len; i++) d[i] *= 0.5 / pk;
+  return (SITAR[midi] = b);
+}
+/* один щипок — і струна «співає» кілька нот поспіль: path = [[зсув у півтонах, тривалість у долях], …] */
+function sitarGliss(sc, base, path, t, out, g) {
+  var b = 0.62, t0 = actx.currentTime + t, s = actx.createBufferSource(), gn = actx.createGain(), x = t0, gg = (g || 0.3) * rr(0.9, 1.1), tot = 0, l = actx.createOscillator(), lg = actx.createGain();
+  s.buffer = sitarBuf(base);
+  path.forEach(function (p, i) {
+    var r = Math.pow(2, p[0] / 12), d = p[1] * b * rr(0.95, 1.06);
+    if (i === 0) s.playbackRate.setValueAtTime(r, x); else s.playbackRate.setTargetAtTime(r, x, p[1] >= 1.5 ? 0.11 : 0.07);   /* мінд: плавне підтягування струни */
+    x += d; tot += d;
+  });
+  l.frequency.value = 5.3; lg.gain.setValueAtTime(0, t0); lg.gain.linearRampToValueAtTime(0.006, t0 + Math.min(tot, 1.5)); l.connect(lg); lg.connect(s.playbackRate);   /* гамак: легке тремтіння */
+  gn.gain.setValueAtTime(0.0001, t0); gn.gain.linearRampToValueAtTime(gg, t0 + 0.012); gn.gain.setValueAtTime(gg, t0 + tot); gn.gain.setTargetAtTime(0.0001, t0 + tot, 0.5);
+  s.connect(gn); gn.connect(out || sc.bus); s.start(t0); s.stop(t0 + tot + 2.5); l.start(t0); l.stop(t0 + tot + 2.5);
+  return t + tot;
+}
+function chikari(sc, t, out) { [0, 0.31, 0.62].forEach(function (x, i) { var s = actx.createBufferSource(), g = actx.createGain(), t0 = actx.currentTime + t + x; s.buffer = sitarBuf(72); g.gain.setValueAtTime(i === 2 ? 0.07 : 0.05, t0); g.gain.setTargetAtTime(0.0001, t0 + 0.1, 0.25); s.connect(g); g.connect(out || sc.bus); s.start(t0); s.stop(t0 + 1.5); }); }
+/* алап у ладі яман: кожен рядок — один щипок і шлях струни */
+var ALAP = [
+  [59, [[0, .6], [1, 3]]],
+  [62, [[0, .7], [2, 1.8], [0, .7], [-2, 2.8]]],
+  [64, [[0, .6], [2, 1.6], [3, 2.8]]],
+  [67, [[0, 1], [-1, .6], [-3, 1.8], [-5, .7], [-7, 3]]],
+  [69, [[0, .7], [2, 1.6], [3, 3.2]]],
+  [72, [[0, 1.2], [-1, .6], [-3, 1.6], [-5, 2.8]]],
+  [64, [[0, .7], [-2, 1.4], [-4, 3.4]]]
+];
+/* наспів сопілки й фрази ситара та флейти — власні; у дзвоні — чотири ноти «Щедрика» (М. Леонтович, 1877–1921) */
+var SOPILKA = [[76,1],[75,0.5],[76,0.5],[72,1],[71,0.5],[69,1.5],[0,0.5],[71,0.5],[72,0.5],[75,0.5],[76,1],[72,0.5],[71,0.5],[69,2]];
+/* «Ой ходить сон коло вікон» — народна колискова; мелодія з нот (мі мінор, 3/4 і 3/2) */
+var LULL = [[71,1],[71,1],[67,1],[71,3],[69,1],[69,1],[64,1],[67,3],[71,1],[71,1],[67,1],[71,3],[69,1],[71,.5],[69,.5],[67,.5],[66,.5],[64,3],
+  [67,1],[67,1],[69,1],[69,1],[67,.5],[66,.5],[64,1],[64,2],[62,1],[0,3], [67,1],[67,1],[69,1],[69,1],[67,.5],[66,.5],[64,1],[64,2],[64,1],[0,5]];
+/* «Ніч яка місячна» — мелодія з нот (ля мінор, 3/4); у третьому стовпчику — бас супроводу на першу долю такту */
+var NICH = [[76,1,45],[74,1],[72,1],[72,1,45],[71,1],[69,1],[71,1,40],[71,1],[71,1],[71,1,40],[68,1],[64,1],[64,1,40],[68,1],[71,1],[74,1,40],[72,1],[71,1],[72,6,45],
+  [72,1,45],[72,1],[72,1],[72,1,45],[71,1],[69,1],[74,1,50],[74,1],[74,1],[74,1,50],[76,1],[77,1],[76,1,45],[76,1],[76,1],[76,1,40],[71,1],[72,1],[69,6,45],[0,4]];
+/* голос без слів: один тон на всю пісню, ноти перетікають; повторена нота й пауза — легким «подихом» */
+function sing(sc, notes, b, out, lev, bass) {
+  var t0 = actx.currentTime + 0.1, o1 = actx.createOscillator(), o2 = actx.createOscillator(), g2 = actx.createGain(), g = actx.createGain(), l = actx.createOscillator(), lg = actx.createGain(), t = t0, first = true;
+  o1.type = 'sine'; o2.type = 'triangle'; g2.gain.value = 0.2; l.frequency.value = 4.4; lg.gain.value = 2;
+  l.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency); g.gain.setValueAtTime(0.0001, t0);
+  notes.forEach(function (n) {
+    var d = n[1] * b;
+    if (n[0]) {
+      var f = mf(n[0]);
+      if (first) { o1.frequency.setValueAtTime(f, t); o2.frequency.setValueAtTime(f, t); first = false; } else { o1.frequency.setTargetAtTime(f, t - 0.02, 0.045); o2.frequency.setTargetAtTime(f, t - 0.02, 0.045); }
+      g.gain.setTargetAtTime(lev * 0.5, Math.max(t0, t - 0.07), 0.03); g.gain.setTargetAtTime(lev * (n[1] >= 3 ? 1 : 0.85), t, 0.09);
+      if (n[1] >= 3) g.gain.setTargetAtTime(lev * 0.35, t + d * 0.55, d * 0.3);     /* довга нота тихо згасає */
+      if (bass && n[2]) { tone(sc, { type: 'triangle', f: mf(n[2]), t: t - actx.currentTime, d: 1.6, g: lev * 0.5, a: 0.005, out: out }); tone(sc, { type: 'triangle', f: mf(n[2] + 12), t: t - actx.currentTime + b, d: 0.9, g: lev * 0.22, a: 0.005, out: out }); }
+    } else g.gain.setTargetAtTime(0.0001, t - 0.05, 0.12);
+    t += d;
+  });
+  g.gain.setTargetAtTime(0.0001, t - 0.4, 0.3);
+  o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(out);
+  [o1, o2, l].forEach(function (x) { x.start(t0); x.stop(t + 1.5); sc.nodes.push(x); });
+  return t - t0;
+}
+var DANCE = [74,77,81,77,79,77,76,74, 72,76,79,76,77,76,74,0, 74,77,81,77,82,81,79,77, 76,79,77,76,74,0,74,0];
+var RAGA = [[[67,2],[69,1],[72,3],[74,1],[76,4]], [[76,1],[74,1],[72,2],[69,1],[67,4]], [[72,2],[74,1],[76,1],[79,3],[76,1],[74,1],[72,4]], [[79,2],[81,1],[79,1],[76,2],[74,1],[72,4]]];
+var LEVEL = { 1: 0.8, 6: 2, 11: 1.6, 13: 1.1, 15: 0.36, 21: 2, 28: 2.3, 29: 1.6, 30: 2.2, 33: 1, 43: 0.42, 51: 2.2, 53: 5, 57: 1.8 };   /* вирівнювання гучності сцен */
+var SCENES = {
+  1: function (sc) {   /* V-подібний двоциліндровий мотор із нерівним тактом («по-те́й-то») під'їжджає, стоїть на холостих, глухне */
+    var t0 = actx.currentTime, eg = actx.createGain(), lp = actx.createBiquadFilter(), t = 0.1, cyc, a;
+    lp.type = 'lowpass'; lp.frequency.setValueAtTime(350, t0); lp.frequency.linearRampToValueAtTime(3200, t0 + 4.5);
+    eg.gain.setValueAtTime(0.04, t0); eg.gain.exponentialRampToValueAtTime(1, t0 + 4.6); lp.connect(eg); eg.connect(sc.bus);
+    function pulse(tt, g) {
+      tone(sc, { f: rr(118, 128), f2: 70, t: tt, d: 0.075, g: g, a: 0.003, out: lp });                      /* удар вихлопу */
+      tone(sc, { type: 'square', f: rr(226, 246), f2: 150, t: tt, d: 0.04, g: g * 0.22, a: 0.002, out: lp });  /* тіло, чутне на малих динаміках */
+      burst(sc, { t: tt, d: 0.06, g: g * 0.8, ft: 'lowpass', ff: 900, ff2: 300, a: 0.002, out: lp });        /* гази */
+    }
+    while (t < 9.4) {
+      cyc = t < 4.2 ? 0.088 : t < 5.6 ? 0.088 + (t - 4.2) / 1.4 * 0.047 : 0.135;   /* оберти падають до холостих */
+      if (t > 8.6) cyc = 0.135 + (t - 8.6) * 0.16;                                   /* вимкнули — мотор докручується */
+      a = t > 8.6 ? Math.max(0.15, 1 - (t - 8.6) * 1.1) : 1;
+      cyc *= rr(0.97, 1.03);
+      pulse(t, 0.3 * a * rr(0.9, 1.05)); pulse(t + cyc * 0.4375, 0.24 * a * rr(0.85, 1.05));   /* 315° і 405° між спалахами */
+      t += cyc;
+    }
+    [10.3, 11.2, 12.6, 14.5].forEach(function (x) { tone(sc, { f: rr(3100, 3600), t: x, d: 0.05, g: 0.03, a: 0.001, out: pan(sc, 0.4) }); });   /* метал холоне */
+    later(sc, 9800, function () { crickets(sc, 0.02); });
+    every(sc, 24000, 32000, function () { tune(sc, SOPILKA, { beat: 0.44, g: 0.065, out: pan(sc, -0.3) }); }, 13500);
+  },
+  2: function (sc) { crickets(sc, 0.008, 2600, 4800); every(sc, 9500, 13000, function () { owl(sc, 0, pan(sc, -0.6)); var d = nightingale(sc, 2.7, pan(sc, 0.55)); if (Math.random() < 0.6) nightingale(sc, 2.7 + d + 0.6, pan(sc, 0.55)); }, 900); },
+  6: function (sc) {   /* струмок і пісок у лотку */
+    var b = bed(sc, { ff: 1500, q: 0.6, g: 0.045, out: pan(sc, -0.3) }); lfo(sc, b.g.gain, 0.23, 0.016); var b2 = bed(sc, { ff: 2600, q: 0.9, g: 0.02, out: pan(sc, 0.4) }); lfo(sc, b2.g.gain, 0.31, 0.01); bed(sc, { ft: 'highpass', ff: 5000, g: 0.01 });
+    every(sc, 80, 240, function () { var f = rr(450, 1500); tone(sc, { f: f, f2: f * rr(1.3, 1.7), d: rr(0.04, 0.08), g: rr(0.012, 0.026), a: 0.005, out: pan(sc, rr(-0.6, 0.6)) }); }, 100);
+    every(sc, 2600, 3800, function () { burst(sc, { d: rr(0.9, 1.3), g: 0.05, ft: 'highpass', ff: 2500, ff2: 5200, a: 0.45, out: pan(sc, 0.2) }); }, 1500);
+  },
+  11: function (sc) {  /* повільні цвіркуни; далекий дзвін */
+    crickets(sc, 0.016, 1800, 3400); var out = far(sc, 1400, 1, -0.4);
+    every(sc, 2400, 4200, function () { burst(sc, { d: rr(0.9, 1.4), g: 0.035, ff: rr(500, 800), ff2: 1300, q: 0.8, a: 0.5, out: pan(sc, rr(-0.2, 0.5)) }); }, 800);   /* вода хлюпає об човен */
+    every(sc, 13000, 17000, function () { [70, 69, 70, 67].forEach(function (m, i) { bell(sc, mf(m), [0, 1.2, 1.8, 2.4][i], 0.07, 3.5, out); }); }, 2500);
+  },
+  13: function (sc) {  /* монета падає й докручується */
+    crickets(sc, 0.013, 1600, 3000);
+    every(sc, 8000, 11000, function () { var t = 0, gap = rr(0.3, 0.38), g = 0.09; clink(sc, 0, 0.13); while (gap > 0.03) { t += gap; clink(sc, t, g); gap *= 0.72; g *= 0.86; } }, 1200);
+  },
+  15: function (sc) {  /* «Ой ходить сон коло вікон» здалеку, тихим голосом без слів */
+    crickets(sc, 0.009, 2600, 4600); var out = far(sc, 1300, 1, -0.2);
+    (function loop(first) { later(sc, first, function () { var d = sing(sc, LULL, 0.68, out, 0.1); loop(d * 1000 + 3000); }); })(1500);
+  },
+  21: function (sc) {  /* весела весільна музика з далекого села (власний наспів) */
+    crickets(sc, 0.013, 1800, 3200); var out = far(sc, 1300, 0.7, 0.5), b = 0.19; lfo(sc, out.g.gain, 0.06, 0.3);
+    (function loop(first) { later(sc, first, function () { DANCE.forEach(function (m, i) { var x = i * b + rr(-0.008, 0.008); if (m) { tone(sc, { type: 'triangle', f: mf(m), t: x, d: 0.22, g: 0.09 * rr(0.8, 1.1), a: 0.004, out: out }); tone(sc, { f: mf(m) * 2, t: x, d: 0.12, g: 0.02, a: 0.004, out: out }); } if (i % 2 === 0) drum(sc, x, i % 4 ? 0.05 : 0.09, out); }); loop(DANCE.length * b * 1000); }); })(1500);
+  },
+  28: function (sc) {  /* казанок булькає; ложка стукає об край казанка */
+    bed(sc, { ff: 700, q: 0.8, g: 0.012 });
+    every(sc, 70, 220, function () { var f = rr(130, 300); tone(sc, { f: f, f2: f * rr(1.5, 1.9), d: rr(0.06, 0.12), g: rr(0.04, 0.07), a: 0.008, out: pan(sc, rr(-0.3, 0.3)) }); }, 100);
+    every(sc, 6500, 9500, function () { var x = 0; for (var k = 0; k < 3; k++) { tink(sc, x, 0.05, 1480, pan(sc, 0.3)); x += rr(0.26, 0.36); } }, 2500);
+  },
+  29: function (sc) {  /* барабан — від початку й постійно; кінський тупіт наближається й віддаляється */
+    var out = far(sc, 2200, 1, 0.4), dr = far(sc, 2600, 1, -0.4);
+    function hoof(tt, a) { burst(sc, { t: tt, d: 0.07, g: 0.5 * a, ft: 'lowpass', ff: 320, a: 0.003, out: out }); burst(sc, { t: tt, d: 0.035, g: 0.2 * a, ff: rr(1100, 1400), q: 2.2, a: 0.002, out: out }); }
+    every(sc, 9500, 13000, function () { for (var k = 0; k < 12; k++) { var a = 0.15 + 0.85 * Math.sin(Math.PI * (k + 0.5) / 12), x = k * 0.5 + rr(-0.015, 0.015); hoof(x, a); hoof(x + 0.12, a * 0.8); hoof(x + 0.24, a); } }, 4000);
+    every(sc, 2900, 2900, function () { drum(sc, 0, 0.19, dr); drum(sc, 0.72, 0.12, dr); drum(sc, 1.08, 0.15, dr); }, 500);
+  },
+  30: function (sc) {  /* ситар: довгі тягучі ноти, що перетікають одна в одну, над бурдоном */
+    tanpura(sc, 0.05); var i = 0, out = pan(sc, -0.15);
+    (function loop(first) { later(sc, first, function () { var a = ALAP[i++ % ALAP.length], e = sitarGliss(sc, a[0], a[1], 0, out); if (i % 2 === 0) chikari(sc, e + 0.2, out); loop(e * 1000 + (i % 2 === 0 ? 1500 : 500)); }); })(1500);
+  },
+  33: function (sc) {  /* ситар кличе — флейта Крішни відповідає */
+    tanpura(sc, 0.05); var i = 0, so = pan(sc, -0.4), fo = pan(sc, 0.4);
+    (function loop(first) { later(sc, first, function () { var a = ALAP[i % ALAP.length], e = sitarGliss(sc, a[0], a[1], 0, so, 0.55), e2 = bansuri(sc, RAGA[i++ % RAGA.length], e + 0.3, fo); loop(e2 * 1000 + 1000); }); })(1500);
+  },
+  43: function (sc) {  /* ніч, вогонь, двоє: «Ніч яка місячна» здалеку; між куплетами — молот по ковадлу */
+    crickets(sc, 0.012, 2000, 3600); var out = far(sc, 1500, 1, -0.45), av = pan(sc, 0.4); lfo(sc, out.g.gain, 0.05, 0.2);
+    function hammer() { var x = 0; for (var k = 0; k < 3; k++) { anvil(sc, x, 0.085 * rr(0.85, 1.1), av); anvil(sc, x + rr(0.28, 0.33), 0.028, av); anvil(sc, x + rr(0.43, 0.48), 0.022, av); x += rr(1.02, 1.18); } }
+    later(sc, 900, hammer);
+    (function loop(first) { later(sc, first, function () { var d = sing(sc, NICH, 0.52, out, 0.085, true); later(sc, d * 1000 + 600, hammer); loop(d * 1000 + 5500); }); })(5200);
+  },
+  49: function (sc) {  /* передсвітанкові птахи; флейта */
+    every(sc, 700, 2200, function () { bird(sc, 0); }, 600);
+    every(sc, 12000, 16000, function () { bansuri(sc, RAGA[Math.floor(Math.random() * RAGA.length)], 0, pan(sc, -0.3)); }, 3000);
+  },
+  51: function (sc) {  /* вітер у степу: пориви щоразу різні */
+    var b = bed(sc, { ff: 420, q: 1.4, g: 0.1 }), h = bed(sc, { ff: 1500, q: 2.5, g: 0.012, out: pan(sc, 0.5) }), gr = bed(sc, { ft: 'highpass', ff: 4200, g: 0.004, out: pan(sc, -0.5) });
+    every(sc, 2600, 5200, function () {
+      var t = actx.currentTime, k = Math.random(), d = rr(1.2, 2.4);
+      b.f.frequency.setTargetAtTime(300 + k * 420, t, d); b.g.gain.setTargetAtTime(0.06 + k * 0.2, t, d);
+      h.f.frequency.setTargetAtTime(900 + k * 1500, t, d); h.g.gain.setTargetAtTime(0.004 + k * 0.035, t, d); gr.g.gain.setTargetAtTime(0.002 + k * 0.012, t, d * 0.7);   /* шелест трави в пориві */
+    }, 200);
+  },
+  53: function (sc) {  /* цокає кишеньковий годинник; дрони пролітають удалині */
+    crickets(sc, 0.008, 2600, 4800); var tk = pan(sc, -0.3), n = 0;
+    every(sc, 200, 200, function () { var hi = n++ % 2; burst(sc, { d: 0.012, g: 0.006, ft: 'highpass', ff: hi ? 5200 : 4200, a: 0.001, out: tk }); tone(sc, { f: hi ? 3900 : 3300, d: 0.012, g: 0.0025, a: 0.001, out: tk }); }, 300);
+    every(sc, 11000, 15000, function () {
+      var t = actx.currentTime, d = 8, f0 = rr(150, 200), g = actx.createGain(), lp = actx.createBiquadFilter(), pn = actx.createStereoPanner ? actx.createStereoPanner() : null, dir = Math.random() < 0.5 ? 1 : -1;
+      lp.type = 'lowpass'; lp.frequency.value = 1400;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + d * 0.5); g.gain.exponentialRampToValueAtTime(0.0001, t + d); lp.connect(g);
+      if (pn) { pn.pan.setValueAtTime(-0.9 * dir, t); pn.pan.linearRampToValueAtTime(0.9 * dir, t + d); g.connect(pn); pn.connect(sc.bus); } else g.connect(sc.bus);
+      [1, 1.012, 2.02, 3.01].forEach(function (m, i) { var o = actx.createOscillator(), og = actx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f0 * m * 1.04, t); o.frequency.linearRampToValueAtTime(f0 * m * 0.96, t + d); og.gain.value = 0.5 / (i + 1); o.connect(og); og.connect(lp); o.start(t); o.stop(t + d + 0.1); });
+    }, 1500);
+  },
+  57: function (sc) {  /* струмок поруч; хтось миє руки; металева ложка дзенькає об миску */
+    var b = bed(sc, { ff: 1500, q: 0.6, g: 0.028, out: pan(sc, -0.5) }); lfo(sc, b.g.gain, 0.23, 0.01); bed(sc, { ft: 'highpass', ff: 5000, g: 0.006, out: pan(sc, -0.5) });
+    every(sc, 110, 300, function () { var f = rr(500, 1400); tone(sc, { f: f, f2: f * 1.5, d: 0.06, g: 0.015, a: 0.005, out: pan(sc, rr(-0.8, -0.2)) }); }, 100);
+    every(sc, 9000, 11500, function () {   /* плескіт рук у воді */
+      for (var k = 0; k < 5; k++) { var x = k * 0.38 + rr(0, 0.1); burst(sc, { t: x, d: rr(0.22, 0.32), g: 0.1, ff: rr(2000, 2800), ff2: 700, q: 0.9, a: 0.012, out: pan(sc, -0.3) }); for (var m = 0; m < 4; m++) { var f = rr(600, 1600); tone(sc, { f: f, f2: f * 1.6, t: x + rr(0.05, 0.25), d: 0.05, g: 0.03, a: 0.004, out: pan(sc, -0.3) }); } }
+    }, 6000);
+    every(sc, 500, 1500, function () { var f = rr(1500, 2600); burst(sc, { d: 0.018, g: 0.035, ff: f, q: 4, a: 0.001, out: pan(sc, 0.2) }); tone(sc, { f: f * 0.6, d: 0.03, g: 0.012, a: 0.001, out: pan(sc, 0.2) }); }, 900);   /* квасолини падають у миску */
+    every(sc, 6500, 9000, function () { var x = 0, out = pan(sc, 0.45); for (var k = 0; k < 3; k++) { tink(sc, x, k === 2 ? 0.075 : 0.06, rr(2250, 2400), out); x += rr(0.22, 0.34); } }, 1800);
+  }
+};
+
+/* ---------- голос: запис уривка (файл iskra-N.m4a / .mp3 поруч зі сторінкою); кнопка з'являється, лише коли файл є ---------- */
+var voice = null, voiceFor = -1;
+function duck(on) { if (actx && master && soundOn) { var t = actx.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(on ? 0.14 : 0.5, t + 0.5); } }
+function voiceUi() { var on = !!voice && !voice.paused && !voice.ended; $('cardListenT').textContent = on ? 'Пауза' : 'Слухати уривок'; $('cardListen').setAttribute('aria-pressed', on ? 'true' : 'false'); duck(on); }
+function stopVoice() { if (voice) { try { voice.pause(); voice.currentTime = 0; } catch (e) {} } }
+function probeVoice(i) {
+  var id = SPARKS[i].id, exts = ['m4a', 'mp3'], k = 0, b = $('cardListen');
+  stopVoice(); voice = null; b.hidden = true; voiceFor = i;
+  if (location.protocol.indexOf('http') !== 0) return;
+  (function tryNext() {
+    if (k >= exts.length || voiceFor !== i) return;
+    var a = new Audio(); a.preload = 'metadata';
+    a.onloadedmetadata = function () { if (voiceFor !== i) return; voice = a; a.onplay = a.onpause = a.onended = voiceUi; b.hidden = false; voiceUi(); };
+    a.onerror = function () { k++; tryNext(); };
+    a.src = id + '.' + exts[k];
+  })();
+}
+$('cardListen').addEventListener('click', function () { if (!voice) return; if (voice.paused) { var p = voice.play(); if (p && p.catch) p.catch(function () {}); } else voice.pause(); });
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) { if (voice) { try { voice.pause(); } catch (e) {} } if (actx && actx.state === 'running') actx.suspend(); }
+  else if (actx && soundOn) actx.resume();
+});
 
 /* ---------- накладки: картка, список, книжка ---------- */
 var current = -1, lastFocus = null;
@@ -852,7 +1200,7 @@ function fillCard(i) {
   $('cardOrd').textContent = 'Розмова ' + s.ord;
   $('cardTitle').textContent = s.title;
   $('cardAsk').textContent = s.ask;
-  $('cardText').innerHTML = s.paras.map(function (p) { return p === '[…]' ? '<p class="gap">[…]</p>' : '<p>' + p + '</p>'; }).join('');
+  $('cardText').innerHTML = s.paras.map(function (p) { return p === '[…]' ? '<p class="gap">[…]</p>' : '<p>' + p + '</p>'; }).join('') + (s.note ? '<p class="gloss">' + s.note + '</p>' : '');
   $('linkbox').classList.remove('show');
   $('sheet').scrollTop = 0;
 }
@@ -872,7 +1220,7 @@ function openSpark(i, fly) {
   if (i < 0 || i >= SPARKS.length) return;
   current = i; lastFocus = document.activeElement;
   function show() {
-    fillCard(i); showLayer('list', false); showLayer('card', true); markOpened(i);
+    fillCard(i); showLayer('list', false); showLayer('card', true); markOpened(i); playScene(SPARKS[i].n); probeVoice(i);
     try { history.replaceState(null, '', '#' + SPARKS[i].id); } catch (e) {}
     $('cardClose').focus({ preventScroll: true });
   }
@@ -880,7 +1228,7 @@ function openSpark(i, fly) {
   else { if (renderer) view.theta = angleOf(i); show(); }
 }
 function closeCard() {
-  showLayer('card', false); clearHash();
+  stopScene(); stopVoice(); showLayer('card', false); clearHash();
   if (opened.size === SPARKS.length && !closeCard.final) { closeCard.final = true; openBook(); return; }
   if (lastFocus && lastFocus.focus) lastFocus.focus({ preventScroll: true });
 }
@@ -889,9 +1237,9 @@ function nextUnopened() {
   for (var k = 1; k <= SPARKS.length; k++) { var j = (current + k) % SPARKS.length; if (!opened.has(SPARKS[j].id)) return j; }
   return (current + 1) % SPARKS.length;
 }
-function openBook() { showLayer('card', false); showLayer('list', false); showLayer('book', true); try { history.replaceState(null, '', '#knyzhka'); } catch (e) {} $('bookClose').focus({ preventScroll: true }); }
+function openBook() { stopScene(); stopVoice(); showLayer('card', false); showLayer('list', false); showLayer('book', true); try { history.replaceState(null, '', '#knyzhka'); } catch (e) {} $('bookClose').focus({ preventScroll: true }); }
 function closeBook() { showLayer('book', false); clearHash(); }
-function openList() { renderList(); showLayer('card', false); showLayer('list', true); $('listClose').focus({ preventScroll: true }); }
+function openList() { stopScene(); stopVoice(); renderList(); showLayer('card', false); showLayer('list', true); $('listClose').focus({ preventScroll: true }); }
 function renderList() {
   $('grid').innerHTML = SPARKS.map(function (s, i) {
     return '<button class="item' + (opened.has(s.id) ? ' seen' : '') + '" type="button" data-i="' + i + '">' +
